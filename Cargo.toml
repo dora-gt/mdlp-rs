@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Taiga Nakayama"]
 edition = "2018"
 description = "A utility crate for literate programming in markdown files."
-license = "Apache 2.0"
+license = "Apache-2.0"
 homepage = "https://github.com/dora-gt/mdlp-rs"
 repository = "https://github.com/dora-gt/mdlp-rs.git"
 
