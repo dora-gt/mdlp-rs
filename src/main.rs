@@ -74,6 +74,8 @@ fn get_files_of(directory: &str) -> Vec<String> {
         .arg("*.md")
         .arg("-type")
         .arg("f")
+        .arg("-maxdepth")
+        .arg("1")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -157,7 +159,8 @@ impl Mdlprs {
 
             // output all the source codes
             for (key, value) in programs_map {
-                let file_path = Path::new(&self.output_directory).join(key).canonicalize().unwrap();
+                self.log(&format!("\toutput_directory:{} Key: {}", &self.output_directory, key));
+                let file_path = Path::new(&self.output_directory).join(key).to_path_buf();
                 self.log(&format!("\tWriting the program to {}...", file_path.as_path().to_str().unwrap()));
                 let file_to_write = File::create(file_path.as_path().to_str().unwrap());
                 let mut writer = BufWriter::new(file_to_write.unwrap());
