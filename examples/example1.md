@@ -18,3 +18,16 @@ Explanations go here.
 ```rust example1-2.rs
 # You can even specify multiple blocks with the same file name.
 ```
+
+You can export multiple files.
+
+```json example1-3.json
+{
+    "json": true
+}
+```
+
+```bash example1-4.sh
+#!/bin/sh
+echo example1-4.sh
+```
