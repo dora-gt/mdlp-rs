@@ -5,8 +5,8 @@ use clap::App;
 use regex::Regex;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::io::{self, BufRead, BufReader, BufWriter };
-use std::process::{Child, Command, Stdio};
+use std::io::{BufReader, BufWriter};
+use std::process::{Command, Stdio};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -14,6 +14,21 @@ lazy_static! {
     static ref REGEX_SOURCE_FILE_NAME: Regex =
         { Regex::new(r"(?P<source_file_name>(\./)*[^\./]+\..+)\.md$").unwrap() };
 }
+
+const HELP_TEXT_FILE_NAME: &str = "❓HINT---------------------------------------------------------------
+To define program file names, you have to specify like the following.
+
+1. Set the source file name like: foo.rs.md
+   In this case, foo.rs will be the program file name.
+
+2. Set file names in code blocks like:
+   ```rust bar.rs
+   # source code goes here.
+   ```
+   In this case, bar.rs will be the program file name.
+   You have to specify both the file type and file name. These should
+   be delimited by a single white space.
+---------------------------------------------------------------------";
 
 fn main() {
     let args = App::new("mdlp-rs")
@@ -53,7 +68,7 @@ fn main() {
 }
 
 fn get_files_of(directory: &str) -> Vec<String> {
-    let mut find_process = Command::new("find")
+    let find_process = Command::new("find")
         .arg(directory)
         .arg("-name")
         .arg("*.md")
@@ -97,69 +112,85 @@ impl Mdlprs {
     }
 
     pub fn output_sources(&mut self) {
-        for file in &self.files {
+        let mut output_file_name_help = false;
+        'file: for file in &self.files {
             self.log(&format!("Processing: {}", file));
             let source_file_name = self.get_source_file_name_of(file);
             let file_to_read = File::open(file).unwrap();
-            let reader = BufReader::new(file_to_read);
+            let mut reader = BufReader::new(file_to_read);
             let mut state = MdlprsState::None;
-            let mut output_file_name;
-            let mut programs_map: HashMap<String, Vec<String>> = HashMap::new();
+            let mut output_file_name= None;
+            let mut programs_map: HashMap<&str, Vec<&str>> = HashMap::new();
+            let mut buffer = String::new();
+            reader.read_to_string(&mut buffer).unwrap();
 
-            for line in reader.lines() {
-                if let Err(_) = line {
-                    break;
-                }
-
-                let line = line.unwrap();
+            // analyze all the lines and push it into separate Vectors
+            for line in buffer.lines() {
                 if line.starts_with("```") {
                     if state == MdlprsState::Program {
-                        panic!("Program section should not start twice!");
+                        state = MdlprsState::Markdown;
+                        continue;
                     }
                     output_file_name = self.get_output_file_name_of(&line);
-                    if source_file_name.as_ref().is_none() && output_file_name.as_ref().is_none() {
-                        self.log("Can not process todo");
-                        return;
+                    if source_file_name.is_none() && output_file_name.is_none() {
+                        self.log(&format!("\t{} needs to define the program file name.", file));
+                        output_file_name_help = true;
+                        continue 'file;
                     }
-                    if output_file_name.as_ref().is_none() {
-                        output_file_name = Some(source_file_name.as_ref().unwrap().clone());
-                    }
-                    if !programs_map.contains_key(output_file_name.as_ref().unwrap()) {
-                        programs_map.insert(output_file_name.as_ref().unwrap().clone(), Vec::new());
+                    if output_file_name.is_none() {
+                        output_file_name = Some(source_file_name.unwrap());
                     }
                     state = MdlprsState::Program;
                 } else if state == MdlprsState::Program {
-                    let key = output_file_name.as_ref().unwrap().clone();
-                    programs_map.get_mut(&key).unwrap().push(line);
+                    let key = output_file_name.unwrap();
+                    if !programs_map.contains_key(key) {
+                        programs_map.insert(key, Vec::new());
+                    }
+                    programs_map.get_mut(key).unwrap().push(&line);
                 }
             }
 
+            if programs_map.keys().len() == 0 {
+                self.log(&format!("\t{} has nothing to process.", file));
+                continue;
+            }
+
+            // output all the source codes
             for (key, value) in programs_map {
-                let file_path = Path::new(&self.output_directory).join(key);
+                let file_path = Path::new(&self.output_directory).join(key).canonicalize().unwrap();
+                self.log(&format!("\tWriting the program to {}...", file_path.as_path().to_str().unwrap()));
                 let file_to_write = File::create(file_path.as_path().to_str().unwrap());
                 let mut writer = BufWriter::new(file_to_write.unwrap());
                 for line in value {
-                    writer.write(line.as_bytes());
+                    writer.write(line.as_bytes()).unwrap();
+                    writer.write("\n".as_bytes()).unwrap();
                 }
+                self.log(&format!("\tDone."));
             }
+        }
+
+        // output help if there were any error files
+        if output_file_name_help {
+            self.log("");
+            self.log(HELP_TEXT_FILE_NAME);
         }
     }
 
     /// If the file contains source file name like: "foo.rs.md", returns Some of "foo.rs".
     /// If not, returns None.
-    fn get_source_file_name_of(&self, file: &str) -> Option<String> {
+    fn get_source_file_name_of<'a>(&self, file: &'a str) -> Option<&'a str> {
         let captures = REGEX_SOURCE_FILE_NAME.captures(file);
         match captures {
-            Some(value) => Some(value.name("source_file_name").unwrap().as_str().to_string()),
+            Some(value) => Some(value.name("source_file_name").unwrap().as_str()),
             None => None,
         }
     }
 
     /// Returns the file name specified in the first line of a code block like \`\`\`rust main.rs
     /// If the line doesn't contain file name, it returns None
-    fn get_output_file_name_of(&self, md_line: &str) -> Option<String> {
+    fn get_output_file_name_of<'a>(&self, md_line: &'a str) -> Option<&'a str> {
         if md_line.contains(" ") {
-            Some(md_line.split(" ").collect::<Vec<&str>>()[1].to_string())
+            Some(md_line.split(" ").collect::<Vec<&str>>()[1])
         } else {
             None
         }
